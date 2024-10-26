@@ -16,6 +16,7 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
     Token public token;
     mapping(address => User) private bidsByUser;
     mapping(address => uint256) private assignedTokens;
+    mapping(address => uint256) private pendingWithdrawals;
     Bid[] private bids;
     address[] private bidders;
     uint256 private totalBids;
@@ -145,7 +146,7 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
 
     /**
      * @notice Function to place a bid
-     * @param _quantity The quantity of tokens to bid on
+     * @param _quantity The quantity of the bid
      */
     function placeBid(uint256 _quantity)
         public
@@ -205,16 +206,31 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
 
         require(tokenAmount > 0 || refundAmount > 0, "No tokens or refunds to withdraw");
 
+        // Clear the state before making external calls
         if (tokenAmount > 0) {
             assignedTokens[msg.sender] = 0;
-            require(token.transfer(msg.sender, tokenAmount * (10 ** uint256(decimals))), "Token transfer failed");
         }
-
         if (refundAmount > 0) {
             bidsByUser[msg.sender].amount = 0;
-            (bool sent,) = msg.sender.call{value: refundAmount}("");
-            require(sent, "Failed to send Ether");
+            pendingWithdrawals[msg.sender] += refundAmount;
         }
+
+        // Perform external calls after updating state
+        if (tokenAmount > 0) {
+            require(token.transfer(msg.sender, tokenAmount * (10 ** uint256(decimals))), "Token transfer failed");
+        }
+    }
+
+    /**
+     * @notice Function to withdraw Ether
+     */
+    function withdrawEther() public nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "No Ether to withdraw");
+
+        pendingWithdrawals[msg.sender] = 0;
+        (bool sent,) = msg.sender.call{value: amount}("");
+        require(sent, "Failed to send Ether");
     }
 
     /**
@@ -231,7 +247,7 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
     }
 
     /**
-     * @notice Function to withdraw collected ether
+     * @notice Function to withdraw collected Ether
      */
     function withdrawCollectedEther() public onlyOwner atState(States.Withdrawal) {
         require(block.timestamp >= end, "Auction not yet ended");
@@ -271,10 +287,6 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
     function isAuctionEnded() public view returns (bool) {
         return block.timestamp >= end || state == States.Withdrawal;
     }
-
-    ///////////////////////////////
-    /////// GETTER FUNCTIONS //////
-    ///////////////////////////////
 
     /**
      * @notice Function to get the current state of the auction
@@ -327,17 +339,17 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
     }
 
     /**
-     * @notice Function to get the token balance of the user
-     * @return uint256 The token balance of the user
+     * @notice Function to get the token balance of the sender
+     * @return uint256 The token balance
      */
     function getTokenBalance() public view returns (uint256) {
         return token.balanceOf(msg.sender);
     }
 
     /**
-     * @notice Function to get the assigned tokens of the user
+     * @notice Function to get the assigned tokens of a user
      * @param user The address of the user
-     * @return uint256 The assigned tokens of the user
+     * @return uint256 The assigned tokens
      */
     function getAssigned(address user) public view returns (uint256) {
         return assignedTokens[user];
@@ -353,11 +365,20 @@ contract Auction is ReentrancyGuard, Pausable, Ownable {
     }
 
     /**
-     * @notice Function to check if the user has assigned tokens or refunds
+     * @notice Function to check if a user has assigned tokens or bids
      * @param user The address of the user
-     * @return bool True if the user has assigned tokens or refunds, false otherwise
+     * @return bool True if the user has assigned tokens or bids, false otherwise
      */
     function checkAssigned(address user) public view returns (bool) {
         return assignedTokens[user] > 0 || bidsByUser[user].amount > 0;
+    }
+
+    /**
+     * @notice Function to get the pending withdrawals of a user
+     * @param user The address of the user
+     * @return uint256 The pending withdrawals
+     */
+    function getPendingWithdrawals(address user) public view returns (uint256) {
+        return pendingWithdrawals[user];
     }
 }
