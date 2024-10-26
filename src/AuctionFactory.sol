@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import "./Auction.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {console} from "forge-std/console.sol";
 
 /**
