@@ -8,18 +8,16 @@ import {console} from "forge-std/console.sol";
 /**
  * @title ERC20 Token
  * @author Dann Wee
- * @notice This contract is a simple ERC20 token with a minting and burning function.
+ * @notice This contract is an ERC20 token with a minting and burning function.
  */
 contract Token is ERC20, Ownable {
     uint256 public immutable initialSupply;
-    uint8 private immutable _decimals;
 
-    constructor(string memory _name, string memory _symbol, uint256 _initialSupply, uint8 decimals_, address _owner)
+    constructor(string memory _name, string memory _symbol, uint256 _initialSupply, address _owner)
         ERC20(_name, _symbol)
         Ownable(_owner)
     {
         initialSupply = _initialSupply;
-        _decimals = decimals_;
         _mint(_owner, initialSupply);
     }
 
@@ -38,17 +36,5 @@ contract Token is ERC20, Ownable {
      */
     function burn(uint256 _amount) public onlyOwner {
         _burn(_msgSender(), _amount);
-    }
-
-    ///////////////////////////////
-    /////// GETTER FUNCTIONS //////
-    ///////////////////////////////
-
-    /**
-     * @notice Function to specify the token's decimals.
-     * @return The number of decimals.
-     */
-    function decimals() public view virtual override returns (uint8) {
-        return _decimals;
     }
 }
