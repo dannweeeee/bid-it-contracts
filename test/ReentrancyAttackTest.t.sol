@@ -27,17 +27,19 @@ contract MaliciousContract {
     receive() external payable {
         if (attackCount < ATTACK_LOOPS) {
             attackCount++;
-            // Try to reenter bid function
-            auction.bid{value: 1 ether}();
+            // Try to reenter bid function with minimum quantity
+            uint256 currentPrice = auction.getCurrentPrice();
+            uint256 minQuantity = 1 ether / currentPrice;
+            auction.bid{value: 1 ether}(minQuantity);
         }
     }
 
     /**
-     * @notice Attack the bid function
+     * @notice Attack the bid function with a specific quantity
      */
-    function attackBid() external payable {
+    function attackBid(uint256 quantity) external payable {
         require(msg.value >= 1 ether, "Need ETH for attack");
-        auction.bid{value: 1 ether}();
+        auction.bid{value: 1 ether}(quantity);
     }
 
     /**
@@ -95,17 +97,19 @@ contract ReentrancyAttackTest is Test {
         vm.deal(address(attacker), 5 ether);
 
         // Record initial state
-        uint256 initialBalance = address(auction).balance;
-        console.log("Initial balance: %s", initialBalance);
         uint256 initialTokensForSale = auction.totalTokensForSale();
-        console.log("Initial tokens for sale: %s", initialTokensForSale);
+
+        // Calculate bid quantity based on current price
+        uint256 currentPrice = auction.getCurrentPrice();
+        uint256 bidQuantity = 1 ether / currentPrice;
 
         // Perform attack
-        attacker.attackBid{value: 1 ether}();
+        attacker.attackBid{value: 1 ether}(bidQuantity);
 
         // Verify state consistency
         assertEq(auction.userBids(address(attacker)), 1 ether, "Bid amount should only be counted once");
         assertTrue(auction.totalTokensForSale() < initialTokensForSale, "Tokens for sale should decrease only once");
+        assertEq(auction.claimableTokens(address(attacker)), bidQuantity, "Claimable tokens should match bid quantity");
     }
 
     /**
@@ -114,7 +118,9 @@ contract ReentrancyAttackTest is Test {
     function testClaimReentrancy() public {
         // First make a legitimate bid
         vm.deal(address(attacker), 2 ether);
-        attacker.attackBid{value: 1 ether}();
+        uint256 currentPrice = auction.getCurrentPrice();
+        uint256 bidQuantity = 1 ether / currentPrice;
+        attacker.attackBid{value: 1 ether}(bidQuantity);
 
         // Fast forward to end of auction
         skip(21 minutes);
@@ -137,7 +143,9 @@ contract ReentrancyAttackTest is Test {
     function testWithdrawReentrancy() public {
         // Fund contract and make a bid
         vm.deal(address(this), 2 ether);
-        auction.bid{value: 2 ether}();
+        uint256 currentPrice = auction.getCurrentPrice();
+        uint256 bidQuantity = 2 ether / currentPrice;
+        auction.bid{value: 2 ether}(bidQuantity);
 
         // Fast forward and end auction
         skip(21 minutes);
@@ -164,7 +172,9 @@ contract ReentrancyAttackTest is Test {
 
         // Make a bid
         vm.deal(address(this), 1 ether);
-        auction.bid{value: 1 ether}();
+        uint256 currentPrice = auction.getCurrentPrice();
+        uint256 bidQuantity = 1 ether / currentPrice;
+        auction.bid{value: 1 ether}(bidQuantity);
 
         // Check state after bid
         assertEq(auction.userBids(address(this)), 1 ether, "Bid not recorded correctly");
