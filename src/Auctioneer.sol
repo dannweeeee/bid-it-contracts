@@ -54,8 +54,7 @@ contract Auctioneer is Ownable {
         uint256 _totalSupply,
         uint256 _initialPrice,
         uint256 _reservePrice,
-        uint256 _minimumBid,
-        uint256 _auctionDuration // New: Custom duration parameter
+        uint256 _minimumBid
     ) external onlyOwner returns (address) {
         if (_totalSupply == 0 || _initialPrice <= _reservePrice || _minimumBid == 0) {
             revert InvalidParameters();
@@ -74,7 +73,7 @@ contract Auctioneer is Ownable {
             isActive: true,
             totalEthRaised: 0,
             totalTokensSold: 0,
-            auctionDuration: _auctionDuration
+            auctionDuration: 20 minutes
         });
 
         emit AuctionCreated(address(newAuction), _name, _symbol, _totalSupply, _initialPrice, _reservePrice);
