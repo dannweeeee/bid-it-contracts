@@ -4,7 +4,7 @@ Dutch Auction Contracts
 
 ## Deployments
 
-- DutchAuction: [0x9F3857Dbb6728D58752939d4Be0B367dae1dc772](https://sepolia.etherscan.io/address/0x9F3857Dbb6728D58752939d4Be0B367dae1dc772)
+- Auctioneer: [0x9F3857Dbb6728D58752939d4Be0B367dae1dc772](https://sepolia.etherscan.io/address/0x9F3857Dbb6728D58752939d4Be0B367dae1dc772)
 
 ## Contracts
 
