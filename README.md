@@ -1,10 +1,10 @@
 # Team Bid It Contracts
 
-Dutch Auction Contracts
+Dutch Auction Contracts powered by Chainlink Automation
 
 ## Deployments
 
-- Auctioneer: [0x3f3976bc2b8458b05c7914a277b4497998604c8c](https://sepolia.etherscan.io/address/0x3F3976BC2b8458b05C7914A277b4497998604c8C)
+- Auctioneer: [0x2515c7967A15Fb090395D0586a450adeFD1072DE](https://sepolia.etherscan.io/address/0x2515c7967A15Fb090395D0586a450adeFD1072DE)
 
 ## Contracts
 
