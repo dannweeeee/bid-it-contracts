@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
-
+import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 import {Auctioneer} from "../src/Auctioneer.sol";
 
 contract DeployAuctioneer is Script {
@@ -19,10 +19,19 @@ contract DeployAuctioneer is Script {
         console.log("Using Automation Registry:", AUTOMATION_REGISTRY);
 
         vm.startBroadcast(deployerPrivateKey);
-
         Auctioneer auctioneer = new Auctioneer(LINK_TOKEN, AUTOMATION_REGISTRY);
 
+        // Fund the contract with LINK tokens
+        LinkTokenInterface link = LinkTokenInterface(LINK_TOKEN);
+        uint256 fundingAmount = 10 * 10 ** 18; // 10 LINK tokens
+
+        // Approve and transfer LINK tokens
+        link.approve(address(auctioneer), fundingAmount);
+        bool success = link.transfer(address(auctioneer), fundingAmount);
+        require(success, "LINK transfer failed");
+
         console.log("Auctioneer deployed at:", address(auctioneer));
+        console.log("Funding contract with", fundingAmount / 10 ** 18, "LINK tokens");
 
         vm.stopBroadcast();
     }
