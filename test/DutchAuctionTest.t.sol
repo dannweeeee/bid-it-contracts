@@ -26,7 +26,7 @@ contract DutchAuctionTest is Test {
         bidder = makeAddr("bidder");
 
         vm.startPrank(owner);
-        auction = new DutchAuction("TestToken", "TEST", TOTAL_SUPPLY, INITIAL_PRICE, RESERVE_PRICE, MINIMUM_BID);
+        auction = new DutchAuction("TestToken", "TEST", TOTAL_SUPPLY, INITIAL_PRICE, RESERVE_PRICE, MINIMUM_BID, owner);
         auction.startAuction();
         vm.stopPrank();
 
@@ -47,6 +47,7 @@ contract DutchAuctionTest is Test {
         assertEq(auction.totalTokensSold(), quantity);
         assertEq(auction.totalTokensForSale(), TOTAL_SUPPLY - quantity);
         assertEq(auction.totalEthRaised(), totalCost);
+        assertTrue(auction.isBidder(bidder));
 
         vm.stopPrank();
     }
@@ -71,7 +72,7 @@ contract DutchAuctionTest is Test {
         uint256 totalCost = quantity * currentPrice;
         uint256 insufficientPayment = totalCost - 0.1 ether;
 
-        vm.expectRevert(PriceNotMet.selector); // Changed from string to custom error
+        vm.expectRevert(PriceNotMet.selector);
         auction.bid{value: insufficientPayment}(quantity);
 
         vm.stopPrank();
@@ -81,11 +82,11 @@ contract DutchAuctionTest is Test {
         // Deploy new auction without starting it
         vm.startPrank(owner);
         DutchAuction newAuction =
-            new DutchAuction("TestToken", "TEST", TOTAL_SUPPLY, INITIAL_PRICE, RESERVE_PRICE, MINIMUM_BID);
+            new DutchAuction("TestToken", "TEST", TOTAL_SUPPLY, INITIAL_PRICE, RESERVE_PRICE, MINIMUM_BID, owner);
         vm.stopPrank();
 
         vm.startPrank(bidder);
-        vm.expectRevert(AuctionNotStarted.selector); // Changed from string to custom error
+        vm.expectRevert(AuctionNotStarted.selector);
         newAuction.bid{value: 1 ether}(1);
         vm.stopPrank();
     }
@@ -94,8 +95,6 @@ contract DutchAuctionTest is Test {
         vm.startPrank(bidder);
 
         uint256 quantity = TOTAL_SUPPLY + 1;
-
-        // Don't actually try to send the full amount, just send enough to pass initial checks
         uint256 sendAmount = 1 ether;
 
         vm.expectRevert(NotEnoughTokens.selector);
@@ -108,9 +107,30 @@ contract DutchAuctionTest is Test {
         // Fast forward to end of auction
         vm.warp(block.timestamp + auction.AUCTION_DURATION() + 1);
 
+        // End the auction first
+        vm.prank(owner);
+        auction.endAuction();
+
         vm.startPrank(bidder);
-        vm.expectRevert(AuctionAlreadyEnded.selector); // Changed from string to custom error
+        vm.expectRevert(AuctionAlreadyEnded.selector);
         auction.bid{value: 1 ether}(1);
+        vm.stopPrank();
+    }
+
+    function test_RefundExcessPayment() public {
+        vm.startPrank(bidder);
+
+        uint256 quantity = 1;
+        uint256 currentPrice = auction.getCurrentPrice();
+        uint256 totalCost = quantity * currentPrice;
+        uint256 excessPayment = totalCost + 0.5 ether;
+
+        uint256 balanceBefore = bidder.balance;
+        auction.bid{value: excessPayment}(quantity);
+        uint256 balanceAfter = bidder.balance;
+
+        assertEq(balanceAfter, balanceBefore - totalCost);
+
         vm.stopPrank();
     }
 }

@@ -1,189 +1,169 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {console} from "forge-std/console.sol";
+import {Test, console2} from "forge-std/Test.sol";
 import {DutchAuction} from "../src/DutchAuction.sol";
 import {Token} from "../src/Token.sol";
 
 /**
- * @title Malicious Contract
- * @author Dann Wee
- * @notice This contract is used to mimic a malicious contract that attempts reentrancy attacks.
+ * @title ReentrancyAttacker
+ * @author @dannweeeee
+ * @notice This contract is used to test the reentrancy attack on the Dutch Auction
  */
-contract MaliciousContract {
+contract ReentrancyAttacker {
     DutchAuction public auction;
     uint256 public attackCount;
-    uint256 public constant ATTACK_LOOPS = 2;
-    bool public attacking;
+    uint256 public targetAmount;
 
-    constructor(DutchAuction _auction) {
-        auction = _auction;
+    constructor(address _auction) {
+        auction = DutchAuction(_auction);
     }
 
     /**
-     * Fallback function to attempt reentrancy on ETH refund
+     * @notice Function to start the attack
+     * @param _tokenAmount The amount of tokens to bid for
+     */
+    function attack(uint256 _tokenAmount) external payable {
+        targetAmount = _tokenAmount;
+        // Initial bid
+        auction.bid{value: msg.value}(_tokenAmount);
+    }
+
+    /**
+     * @notice Fallback function to perform the reentrant attack
      */
     receive() external payable {
-        if (attackCount < ATTACK_LOOPS) {
+        if (address(auction).balance >= msg.value && attackCount < 3) {
             attackCount++;
-            // Try to reenter bid function with minimum quantity
-            uint256 currentPrice = auction.getCurrentPrice();
-            uint256 minQuantity = 1 ether / currentPrice;
-            auction.bid{value: 1 ether}(minQuantity);
+            // Try to reenter the bid function
+            auction.bid{value: msg.value}(targetAmount);
         }
     }
-
-    /**
-     * @notice Attack the bid function with a specific quantity
-     */
-    function attackBid(uint256 quantity) external payable {
-        require(msg.value >= 1 ether, "Need ETH for attack");
-        auction.bid{value: 1 ether}(quantity);
-    }
-
-    /**
-     * @notice Attack the claim function
-     */
-    function attackClaim() external {
-        auction.claimTokens();
-    }
-
-    /**
-     * @notice Get the claimable tokens
-     */
-    function getClaimableTokens() external view returns (uint256) {
-        return auction.claimableTokens(address(this));
-    }
 }
-
 /**
- * @title Reentrancy Attack Test
- * @author Dann Wee
- * @notice This contract is used to test reentrancy attacks on the DutchAuction contract.
+ * @title ReentrancyAttackTest
+ * @author @dannweeeee
+ * @notice This contract is used to test the reentrancy attack on the Dutch Auction
  */
+
 contract ReentrancyAttackTest is Test {
     DutchAuction public auction;
-    Token public token;
-    MaliciousContract public attacker;
-
-    // Add receive function to accept ETH
-    receive() external payable {}
+    ReentrancyAttacker public attacker;
+    address public owner;
+    address public alice;
+    address public bob;
 
     /**
-     * @notice Set up the test
+     * @notice Setup function to initialize the test
      */
     function setUp() public {
-        // Deploy contracts
+        owner = makeAddr("owner");
+        alice = makeAddr("alice");
+        bob = makeAddr("bob");
+
+        vm.prank(owner);
         auction = new DutchAuction(
             "Test Token",
             "TEST",
             1000 ether, // total supply
-            1 ether, // initial price
-            0.1 ether, // reserve price
-            0.1 ether // minimum bid
+            2 ether, // initial price
+            1 ether, // reserve price
+            0.1 ether, // minimum bid
+            owner
         );
-        attacker = new MaliciousContract(auction);
 
-        // Start auction
+        attacker = new ReentrancyAttacker(address(auction));
+
+        vm.prank(owner);
         auction.startAuction();
     }
 
     /**
-     * @notice Test the bid reentrancy attack
+     * @notice Test the reentrancy attack on the bid function
      */
-    function testBidReentrancy() public {
-        // Fund attacker
-        vm.deal(address(attacker), 5 ether);
+    function test_ReentrancyAttackBidFunction() public {
+        vm.deal(address(attacker), 10 ether);
 
-        // Record initial state
-        uint256 initialTokensForSale = auction.totalTokensForSale();
+        uint256 initialAttackerBalance = address(attacker).balance;
 
-        // Calculate bid quantity based on current price
-        uint256 currentPrice = auction.getCurrentPrice();
-        uint256 bidQuantity = 1 ether / currentPrice;
+        uint256 tokenAmount = 1 ether;
+        uint256 bidAmount = 2 ether;
 
-        // Perform attack
-        attacker.attackBid{value: 1 ether}(bidQuantity);
+        vm.expectRevert();
+        attacker.attack{value: bidAmount}(tokenAmount);
 
-        // Verify state consistency
-        assertEq(auction.userBids(address(attacker)), 1 ether, "Bid amount should only be counted once");
-        assertTrue(auction.totalTokensForSale() < initialTokensForSale, "Tokens for sale should decrease only once");
-        assertEq(auction.claimableTokens(address(attacker)), bidQuantity, "Claimable tokens should match bid quantity");
+        // Verify that the attack was unsuccessful
+        assertEq(auction.totalTokensSold(), 0, "Tokens should not have been sold during attack");
+        assertEq(attacker.attackCount(), 0, "Attack count should remain 0");
+        assertEq(address(attacker).balance, initialAttackerBalance, "Attacker balance should remain unchanged");
     }
 
     /**
-     * @notice Test the claim reentrancy attack
+     * @notice Test the legitimate multiple bids
      */
-    function testClaimReentrancy() public {
-        // First make a legitimate bid
-        vm.deal(address(attacker), 2 ether);
+    function test_LegitimateMultipleBids() public {
+        vm.deal(alice, 1000000 ether);
+        vm.deal(bob, 1000000 ether);
+
+        uint256 tokenAmount = 1000; // 1000 tokens
         uint256 currentPrice = auction.getCurrentPrice();
-        uint256 bidQuantity = 1 ether / currentPrice;
-        attacker.attackBid{value: 1 ether}(bidQuantity);
+        uint256 totalCost = currentPrice * tokenAmount; // Divide by 1e18 to handle decimals
 
-        // Fast forward to end of auction
-        skip(21 minutes);
-        auction.endAuction();
+        // Alice's bid
+        vm.startPrank(alice);
+        auction.bid{value: totalCost}(tokenAmount);
+        vm.stopPrank();
 
-        // Record initial claimable tokens
-        uint256 initialClaimable = attacker.getClaimableTokens();
-        require(initialClaimable > 0, "Setup failed: No tokens to claim");
+        // Bob's bid
+        vm.startPrank(bob);
+        currentPrice = auction.getCurrentPrice();
+        totalCost = currentPrice * tokenAmount;
+        auction.bid{value: totalCost}(tokenAmount);
+        vm.stopPrank();
 
-        // Attempt claim attack
-        attacker.attackClaim();
-
-        // Verify tokens were only claimed once
-        assertEq(attacker.getClaimableTokens(), 0, "Tokens should only be claimed once");
+        // Verify the total tokens sold
+        assertEq(auction.totalTokensSold(), 2000, "Total tokens sold should be correct");
     }
 
     /**
-     * @notice Test the withdraw reentrancy attack
+     * @notice Test the reentrancy attack on the withdraw function
      */
-    function testWithdrawReentrancy() public {
-        // Fund contract and make a bid
-        vm.deal(address(this), 2 ether);
-        uint256 currentPrice = auction.getCurrentPrice();
-        uint256 bidQuantity = 2 ether / currentPrice;
-        auction.bid{value: 2 ether}(bidQuantity);
+    function test_ReentrancyAttackWithdraw() public {
+        vm.deal(address(auction), 5 ether);
 
-        // Fast forward and end auction
-        skip(21 minutes);
+        // End the auction to enable withdrawals
+        vm.warp(block.timestamp + 21 minutes);
+        vm.prank(owner);
         auction.endAuction();
 
-        // Record initial balance
+        // Attempt to attack the withdraw function
         uint256 initialBalance = address(auction).balance;
-        assertTrue(initialBalance > 0, "Contract should have ETH balance");
 
-        // Attempt withdraw as owner
+        vm.prank(owner);
         auction.withdrawEth();
 
-        // Verify complete withdrawal
-        assertEq(address(auction).balance, 0, "Contract should be empty after withdrawal");
+        assertEq(address(auction).balance, 0, "All ETH should be withdrawn");
+        assertEq(owner.balance, initialBalance, "Owner should receive all ETH");
     }
 
-    /**
-     * @notice Test the auction state
-     */
-    function testAuctionState() public {
-        // Initial state checks
-        assertEq(address(auction).balance, 0, "Initial balance should be 0");
-        assertEq(auction.totalTokensForSale(), 1000 ether, "Initial tokens for sale incorrect");
+    function test_ReentrancyGuardPause() public {
+        // Test that pause/unpause functions are protected
+        vm.startPrank(owner);
+        auction.pause();
 
-        // Make a bid
-        vm.deal(address(this), 1 ether);
-        uint256 currentPrice = auction.getCurrentPrice();
-        uint256 bidQuantity = 1 ether / currentPrice;
-        auction.bid{value: 1 ether}(bidQuantity);
+        // Attempt to bid while paused
+        vm.deal(alice, 2 ether);
+        vm.expectRevert();
+        vm.prank(alice);
+        auction.bid{value: 2 ether}(1 ether);
 
-        // Check state after bid
-        assertEq(auction.userBids(address(this)), 1 ether, "Bid not recorded correctly");
+        // Unpause and verify bid works
+        auction.unpause();
+        vm.stopPrank();
 
-        // End auction
-        skip(21 minutes);
-        auction.endAuction();
+        vm.prank(alice);
+        auction.bid{value: 2 ether}(1 ether);
 
-        // Check final state
-        assertTrue(auction.auctionEnded(), "Auction should be ended");
+        assertEq(auction.totalTokensSold(), 1 ether, "Bid should succeed after unpause");
     }
 }

@@ -7,7 +7,7 @@ import {console} from "forge-std/console.sol";
 
 /**
  * @title ERC20 Token
- * @author Dann Wee
+ * @author @dannweeeee
  * @notice This contract is an ERC20 token with a minting and burning function.
  */
 contract Token is ERC20, Ownable {
