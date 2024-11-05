@@ -239,6 +239,89 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     /**
+     * @notice Get token-specific details of the auction
+     * @return tokenName The name of the token being auctioned
+     * @return tokenSymbol The symbol of the token
+     * @return tokenDecimals The number of decimals of the token
+     * @return tokenTotalSupply The total supply of the token
+     * @return tokenAddress The address of the token contract
+     * @return tokenBalance The token balance of this contract
+     */
+    function getTokenDetails()
+        external
+        view
+        returns (
+            string memory tokenName,
+            string memory tokenSymbol,
+            uint8 tokenDecimals,
+            uint256 tokenTotalSupply,
+            address tokenAddress,
+            uint256 tokenBalance
+        )
+    {
+        return (
+            token.name(),
+            token.symbol(),
+            token.decimals(),
+            token.totalSupply(),
+            address(token),
+            token.balanceOf(address(this))
+        );
+    }
+
+    /**
+     * @notice Get comprehensive auction details excluding status information
+     * @return tokenAddress The address of the token being auctioned
+     * @return initialTokenPrice The initial price of tokens
+     * @return reserveTokenPrice The reserve price of tokens
+     * @return minBidAmount The minimum bid amount
+     * @return auctionStartTime The start time of the auction
+     * @return auctionEndTime The end time of the auction
+     * @return duration The duration of the auction
+     * @return totalSupply The total tokens initially available
+     * @return ethRaised The total ETH raised so far
+     * @return soldTokens The total tokens sold
+     * @return totalBidders The total number of unique bidders
+     * @return automationRegistryAddress The address of the automation registry
+     * @return auctioneerAddress The address of the auctioneer
+     */
+    function getAuctionStatistics()
+        external
+        view
+        returns (
+            address tokenAddress,
+            uint256 initialTokenPrice,
+            uint256 reserveTokenPrice,
+            uint256 minBidAmount,
+            uint256 auctionStartTime,
+            uint256 auctionEndTime,
+            uint256 duration,
+            uint256 totalSupply,
+            uint256 ethRaised,
+            uint256 soldTokens,
+            uint256 totalBidders,
+            address automationRegistryAddress,
+            address auctioneerAddress
+        )
+    {
+        return (
+            address(token),
+            initialPrice,
+            reservePrice,
+            minimumBid,
+            startTime,
+            endTime,
+            AUCTION_DURATION,
+            totalTokensForSale + totalTokensSold,
+            totalEthRaised,
+            totalTokensSold,
+            bidders.length,
+            automationRegistry,
+            auctioneer
+        );
+    }
+
+    /**
      * @notice Get the auction status
      * @return isStarted Whether the auction has started
      * @return isEnded Whether the auction has ended
