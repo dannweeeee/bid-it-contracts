@@ -303,7 +303,6 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
 
     /**
      * @notice Chainlink Automation: Check if upkeep is needed
-     * @dev This function is used to determine if the auction should be ended or if the tokens should be distributed
      */
     function checkUpkeep(bytes calldata /* checkData */ )
         external
@@ -311,39 +310,47 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         override
         returns (bool upkeepNeeded, bytes memory performData)
     {
+        // Case 1: Check if auction needs to be ended
         if (startTime != 0 && !auctionEnded && block.timestamp >= endTime) {
-            return (true, abi.encode(true, 0)); // indicates auction end
+            return (true, abi.encode(true, 0)); // End auction
         }
 
+        // Case 2: Check if tokens need to be distributed
         if (auctionEnded && currentClaimIndex < bidders.length) {
-            return (true, abi.encode(false, currentClaimIndex)); // indicates token distribution
+            uint256 remainingBidders = bidders.length - currentClaimIndex;
+            uint256 batchSize = remainingBidders > BATCH_SIZE ? BATCH_SIZE : remainingBidders;
+            return (true, abi.encode(false, currentClaimIndex, batchSize)); // Distribute tokens
         }
 
-        return (false, abi.encode(false, 0));
+        return (false, "");
     }
 
     /**
      * @notice Chainlink Automation: Perform the upkeep
-     * @dev This function is used to end the auction and distribute the tokens
      */
-    function performUpkeep(bytes calldata performData) external override onlyAutomation {
-        (bool isAuctionEnd, uint256 startIndex) = abi.decode(performData, (bool, uint256));
+    function performUpkeep(bytes calldata performData) external override {
+        require(msg.sender == automationRegistry, "Only Chainlink Automation");
+
+        (bool isAuctionEnd, uint256 startIndex, uint256 batchSize) = abi.decode(performData, (bool, uint256, uint256));
 
         if (isAuctionEnd) {
-            if (startTime == 0) revert AuctionNotStarted();
-            if (block.timestamp >= endTime && !auctionEnded) {
+            // End the auction
+            if (!auctionEnded && block.timestamp >= endTime) {
                 auctionEnded = true;
+
+                // Burn remaining tokens if any
                 if (totalTokensForSale > 0) {
                     token.burn(totalTokensForSale);
                 }
+
                 emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
             }
             return;
         }
 
-        // Process token distribution in batches
-        uint256 endIndex = Math.min(startIndex + BATCH_SIZE, bidders.length);
-        for (uint256 i = startIndex; i < endIndex; i++) {
+        // Distribute tokens in batches
+        uint256 endIndex = startIndex + batchSize;
+        for (uint256 i = startIndex; i < endIndex && i < bidders.length; i++) {
             address bidder = bidders[i];
             uint256 tokenAmount = claimableTokens[bidder];
 
@@ -353,11 +360,11 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
 
                 bool success = token.transfer(bidder, tokenAmount);
                 if (!success) {
-                    // Revert state changes if transfer fails
                     claimableTokens[bidder] = tokenAmount;
                     hasClaimedTokens[bidder] = false;
                     revert TransferFailed();
                 }
+
                 emit TokensClaimed(bidder, tokenAmount);
             }
         }

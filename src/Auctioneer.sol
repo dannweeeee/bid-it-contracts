@@ -3,8 +3,23 @@ pragma solidity ^0.8.26;
 
 import {DutchAuction} from "./DutchAuction.sol";
 import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
-import {AutomationRegistryBaseInterface} from
-    "@chainlink/contracts/src/v0.8/automation/interfaces/v2_0/AutomationRegistryInterface2_0.sol";
+
+struct RegistrationParams {
+    string name;
+    bytes encryptedEmail;
+    address upkeepContract;
+    uint32 gasLimit;
+    address adminAddress;
+    uint8 triggerType;
+    bytes checkData;
+    bytes triggerConfig;
+    bytes offchainConfig;
+    uint96 amount;
+}
+
+interface AutomationRegistrarInterface {
+    function registerUpkeep(RegistrationParams calldata requestParams) external returns (uint256);
+}
 
 error InvalidAddresses();
 error LinkTransferFailed();
@@ -19,7 +34,7 @@ error UpkeepRegistrationFailed();
  */
 contract Auctioneer {
     LinkTokenInterface public immutable i_link;
-    AutomationRegistryBaseInterface public immutable i_registry;
+    AutomationRegistrarInterface public immutable i_registrar;
 
     uint96 public constant UPKEEP_MINIMUM_FUNDS = 5 * 10 ** 18; // minimum 5 LINK
     uint32 public constant UPKEEP_GAS_LIMIT = 500000;
@@ -42,10 +57,10 @@ contract Auctioneer {
     event AuctionPaused(address indexed auctionAddress);
     event AuctionUnpaused(address indexed auctionAddress);
 
-    constructor(address _link, address _registry) {
-        if (_link == address(0) || _registry == address(0)) revert InvalidAddresses();
+    constructor(address _link, address _registrar) {
+        if (_link == address(0) || _registrar == address(0)) revert InvalidAddresses();
         i_link = LinkTokenInterface(_link);
-        i_registry = AutomationRegistryBaseInterface(_registry);
+        i_registrar = AutomationRegistrarInterface(_registrar);
     }
 
     ///////////////////////////////
@@ -77,7 +92,7 @@ contract Auctioneer {
         uint256 upkeepId = _registerAuctionUpkeep(address(newAuction));
 
         // Setup auction
-        DutchAuction(address(newAuction)).setAutomationRegistry(address(i_registry));
+        DutchAuction(address(newAuction)).setAutomationRegistry(address(i_registrar)); // Changed from i_registry
         auctions.push(newAuction);
         isValidAuction[address(newAuction)] = true;
         auctionUpkeepIds[address(newAuction)] = upkeepId;
@@ -264,22 +279,6 @@ contract Auctioneer {
         return string(buffer);
     }
 
-    /**
-     * @notice Add more LINK funding to an auction's upkeep
-     * @param auctionAddress The address of the auction to fund
-     * @param amount Amount of LINK tokens to add
-     */
-    function fundUpkeep(address auctionAddress, uint96 amount) external {
-        if (!isValidAuction[auctionAddress]) revert AuctionNotFound();
-
-        if (!i_link.transferFrom(msg.sender, address(this), amount)) {
-            revert LinkTransferFailed();
-        }
-
-        i_link.approve(address(i_registry), amount);
-        i_registry.addFunds(auctionUpkeepIds[auctionAddress], amount);
-    }
-
     ///////////////////////////////
     ///// CHAINLINK FUNCTIONS /////
     ///////////////////////////////
@@ -290,17 +289,25 @@ contract Auctioneer {
      * @return upkeepId The ID of the registered upkeep
      */
     function _registerAuctionUpkeep(address auctionAddress) internal returns (uint256) {
-        // Approve LINK transfer to registry
-        i_link.approve(address(i_registry), UPKEEP_MINIMUM_FUNDS);
+        // Approve LINK transfer to registrar
+        i_link.approve(address(i_registrar), UPKEEP_MINIMUM_FUNDS);
+
+        // Prepare registration parameters
+        RegistrationParams memory params = RegistrationParams({
+            name: "Dutch Auction Automation",
+            encryptedEmail: bytes(""), // No email needed
+            upkeepContract: auctionAddress,
+            gasLimit: UPKEEP_GAS_LIMIT,
+            adminAddress: msg.sender,
+            triggerType: 0, // Use default trigger type
+            checkData: bytes(""),
+            triggerConfig: bytes(""),
+            offchainConfig: bytes(""),
+            amount: UPKEEP_MINIMUM_FUNDS
+        });
 
         // Register upkeep
-        try i_registry.registerUpkeep(
-            auctionAddress, // Target contract address
-            UPKEEP_GAS_LIMIT, // Gas limit for upkeep
-            msg.sender, // Admin address (auction creator)
-            "", // Empty check data
-            "" // Empty offchain config
-        ) returns (uint256 upkeepId) {
+        try i_registrar.registerUpkeep(params) returns (uint256 upkeepId) {
             return upkeepId;
         } catch {
             revert UpkeepRegistrationFailed();
