@@ -155,7 +155,6 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
      */
     function endAuction() external onlyOwner {
         if (startTime == 0) revert AuctionNotStarted();
-        if (block.timestamp < endTime && totalTokensForSale > 0) revert AuctionNotEnded();
         if (auctionEnded) revert AuctionAlreadyEnded();
 
         // Disable Chainlink Automation to prevent conflicts
@@ -413,7 +412,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     /**
      * @notice Chainlink Automation: Perform the upkeep
      */
-    function performUpkeep(bytes calldata performData) external override {
+    function performUpkeep(bytes calldata performData) external override onlyAutomation {
         require(msg.sender == automationRegistry, "Only Chainlink Automation");
 
         (bool isAuctionEnd, uint256 startIndex, uint256 batchSize) = abi.decode(performData, (bool, uint256, uint256));

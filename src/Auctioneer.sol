@@ -35,6 +35,7 @@ error UpkeepRegistrationFailed();
 contract Auctioneer {
     LinkTokenInterface public immutable i_link;
     AutomationRegistrarInterface public immutable i_registrar;
+    address public immutable i_registry;
 
     uint96 public constant UPKEEP_MINIMUM_FUNDS = 5 * 10 ** 18; // minimum 5 LINK
     uint32 public constant UPKEEP_GAS_LIMIT = 500000;
@@ -57,10 +58,13 @@ contract Auctioneer {
     event AuctionPaused(address indexed auctionAddress);
     event AuctionUnpaused(address indexed auctionAddress);
 
-    constructor(address _link, address _registrar) {
-        if (_link == address(0) || _registrar == address(0)) revert InvalidAddresses();
+    constructor(address _link, address _registrar, address _registry) {
+        if (_link == address(0) || _registrar == address(0) || _registry == address(0)) {
+            revert InvalidAddresses();
+        }
         i_link = LinkTokenInterface(_link);
         i_registrar = AutomationRegistrarInterface(_registrar);
+        i_registry = _registry;
     }
 
     ///////////////////////////////
@@ -91,8 +95,8 @@ contract Auctioneer {
         // Register the upkeep
         uint256 upkeepId = _registerAuctionUpkeep(address(newAuction));
 
-        // Setup auction
-        DutchAuction(address(newAuction)).setAutomationRegistry(address(i_registrar)); // Changed from i_registry
+        // Setup auction with registry (not registrar)
+        DutchAuction(address(newAuction)).setAutomationRegistry(i_registry); // Changed to use registry
         auctions.push(newAuction);
         isValidAuction[address(newAuction)] = true;
         auctionUpkeepIds[address(newAuction)] = upkeepId;
