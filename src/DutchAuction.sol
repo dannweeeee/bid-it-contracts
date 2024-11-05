@@ -8,19 +8,19 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/automation/AutomationCompatible.sol";
 
+error InitialPriceTooLow();
+error InvalidInitialPrice();
+error InvalidTotalSupply();
+error MinimumBidTooHigh();
+error InvalidMinimumBid();
 error AuctionNotStarted();
+error AuctionAlreadyEnded();
+error InvalidBidQuantity();
+error BidQuantityTooHigh();
+error MsgValueTooLow();
 error AuctionAlreadyStarted();
 error AuctionNotEnded();
-error AuctionAlreadyEnded();
-error InvalidBid();
-error InvalidAmount();
-error InvalidMinimumBid();
-error NothingToClaim();
-error AlreadyClaimed();
-error NotEnoughTokens();
-error PriceNotMet();
-error BidTooLow();
-error InvalidPrice();
+error NoEthToClaim();
 error TransferFailed();
 error RefundFailed();
 
@@ -33,21 +33,20 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     Token public token;
 
     uint256 public initialPrice;
-    uint256 public currentPrice;
     uint256 public reservePrice;
+    uint256 public minimumBid;
     uint256 public startTime;
     uint256 public endTime;
     uint256 public immutable AUCTION_DURATION = 20 minutes;
-    uint256 public discountRate;
     uint256 public totalTokensForSale;
     uint256 public totalEthRaised;
     uint256 public totalTokensSold;
-    uint256 public minimumBid;
     bool public auctionEnded;
-    address public automationRegistry; // Chainlink Automation registry
-    uint256 public constant BATCH_SIZE = 50; // Number of claims to process per upkeep
+    address public automationRegistry;
+    uint256 public constant BATCH_SIZE = 50;
     uint256 public currentClaimIndex;
     address[] public bidders;
+    address public immutable auctioneer;
 
     mapping(address => uint256) public userBids;
     mapping(address => uint256) public claimableTokens;
@@ -68,19 +67,21 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         uint256 _initialPrice,
         uint256 _reservePrice,
         uint256 _minimumBid,
-        address _owner
+        address _owner,
+        address _auctioneer
     ) ReentrancyGuard() Pausable() Ownable(_owner) {
-        if (_initialPrice <= _reservePrice) revert InvalidPrice();
-        if (_totalSupply == 0) revert InvalidAmount();
-        if (_minimumBid == 0) revert InvalidAmount();
-        if (_initialPrice == 0) revert InvalidPrice();
-        if (_minimumBid > _reservePrice) revert InvalidMinimumBid();
+        if (_initialPrice == 0) revert InvalidInitialPrice();
+        if (_initialPrice <= _reservePrice) revert InitialPriceTooLow();
+        if (_totalSupply == 0) revert InvalidTotalSupply();
+        if (_minimumBid == 0) revert InvalidMinimumBid();
+        if (_minimumBid > _reservePrice) revert MinimumBidTooHigh();
 
         token = new Token(_name, _symbol, _totalSupply, address(this));
+        totalTokensForSale = _totalSupply;
         initialPrice = _initialPrice;
         reservePrice = _reservePrice;
-        totalTokensForSale = _totalSupply;
         minimumBid = _minimumBid;
+        auctioneer = _auctioneer;
     }
 
     /**
@@ -88,23 +89,32 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
      * @param _quantity The quantity of tokens to bid for
      */
     function bid(uint256 _quantity) public payable nonReentrant whenNotPaused {
+        // Check if auction has started and not ended
         if (startTime == 0) revert AuctionNotStarted();
         if (auctionEnded) revert AuctionAlreadyEnded();
-        if (_quantity == 0) revert InvalidBid();
-        if (_quantity > totalTokensForSale) revert NotEnoughTokens();
-        if (msg.value < minimumBid) revert BidTooLow();
 
+        // Validate bid quantity
+        if (_quantity == 0) revert InvalidBidQuantity();
+        if (_quantity > totalTokensForSale) revert BidQuantityTooHigh();
+        if (msg.value < minimumBid) revert MsgValueTooLow();
+
+        // Calculate total cost based on current token price
         uint256 currentTokenPrice = getCurrentPrice();
-        uint256 totalCost = _quantity * currentTokenPrice;
+        uint256 totalCost = _quantity * currentTokenPrice / (1 ether);
 
-        if (msg.value < totalCost) revert PriceNotMet();
+        // Ensure sufficient ETH was sent
+        if (msg.value < totalCost) revert MsgValueTooLow();
 
+        // Update auction state
         totalTokensForSale -= _quantity;
         totalTokensSold += _quantity;
         totalEthRaised += totalCost;
+
+        // Update bidder state
         userBids[msg.sender] += totalCost;
         claimableTokens[msg.sender] += _quantity;
 
+        // Add bidder to list if first time bidding
         if (!isBidder[msg.sender]) {
             isBidder[msg.sender] = true;
             bidders.push(msg.sender);
@@ -112,6 +122,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
 
         emit Bid(msg.sender, totalCost, _quantity, currentTokenPrice);
 
+        // Refund excess ETH if any
         uint256 refundAmount = msg.value - totalCost;
         if (refundAmount > 0) {
             (bool success,) = msg.sender.call{value: refundAmount}("");
@@ -182,9 +193,11 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     function withdrawEth() external onlyOwner nonReentrant {
         if (!auctionEnded) revert AuctionNotEnded();
 
+        // Get balance of contract
         uint256 balance = address(this).balance;
-        if (balance == 0) revert NothingToClaim();
+        if (balance == 0) revert NoEthToClaim();
 
+        // Transfer ETH to owner
         (bool success,) = owner().call{value: balance}("");
         if (!success) revert TransferFailed();
 
@@ -202,7 +215,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
      */
     function calculatePrice(uint256 _quantity) public view returns (uint256) {
         uint256 price = getCurrentPrice();
-        return price * _quantity;
+        return price * _quantity / (1 ether);
     }
 
     ///////////////////////////////
@@ -211,7 +224,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
 
     /**
      * @notice Get the current price of the tokens
-     * @return The current price of the tokens
+     * @return The current price of the tokens (in wei)
      */
     function getCurrentPrice() public view returns (uint256) {
         if (block.timestamp <= startTime) return initialPrice;
@@ -219,7 +232,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
 
         uint256 timeElapsed = block.timestamp - startTime;
         uint256 totalPriceDrop = initialPrice - reservePrice;
-        uint256 discount = (totalPriceDrop * timeElapsed) / AUCTION_DURATION;
+        uint256 discount = (timeElapsed * totalPriceDrop) / AUCTION_DURATION;
         return initialPrice - discount;
     }
 
@@ -249,6 +262,14 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         timeRemaining = block.timestamp >= endTime ? 0 : endTime - block.timestamp;
     }
 
+    /**
+     * @notice Get the bidders
+     * @return The bidders
+     */
+    function getBidders() external view returns (address[] memory) {
+        return bidders;
+    }
+
     ///////////////////////////////
     ////// CHAINLINK FUNCTIONS ////
     ///////////////////////////////
@@ -262,10 +283,18 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     /**
+     * @notice Modifier to ensure only the auctioneer can call a function
+     */
+    modifier onlyAuctioneer() {
+        require(msg.sender == auctioneer, "Only Auctioneer can call this");
+        _;
+    }
+
+    /**
      * @notice Set the automation registry
      * @param _registry The address of the automation registry
      */
-    function setAutomationRegistry(address _registry) external onlyOwner {
+    function setAutomationRegistry(address _registry) external onlyAuctioneer {
         require(_registry != address(0), "Invalid registry address");
         address oldRegistry = automationRegistry;
         automationRegistry = _registry;
@@ -290,7 +319,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             return (true, abi.encode(false, currentClaimIndex)); // indicates token distribution
         }
 
-        return (false, "");
+        return (false, abi.encode(false, 0));
     }
 
     /**
@@ -301,6 +330,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         (bool isAuctionEnd, uint256 startIndex) = abi.decode(performData, (bool, uint256));
 
         if (isAuctionEnd) {
+            if (startTime == 0) revert AuctionNotStarted();
             if (block.timestamp >= endTime && !auctionEnded) {
                 auctionEnded = true;
                 if (totalTokensForSale > 0) {
@@ -322,9 +352,13 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
                 hasClaimedTokens[bidder] = true;
 
                 bool success = token.transfer(bidder, tokenAmount);
-                if (success) {
-                    emit TokensClaimed(bidder, tokenAmount);
+                if (!success) {
+                    // Revert state changes if transfer fails
+                    claimableTokens[bidder] = tokenAmount;
+                    hasClaimedTokens[bidder] = false;
+                    revert TransferFailed();
                 }
+                emit TokensClaimed(bidder, tokenAmount);
             }
         }
 

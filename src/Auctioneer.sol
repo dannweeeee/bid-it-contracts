@@ -6,9 +6,11 @@ import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interface
 import {AutomationRegistryBaseInterface} from
     "@chainlink/contracts/src/v0.8/automation/interfaces/v2_0/AutomationRegistryInterface2_0.sol";
 
-error AuctionNotFound();
-error InvalidParameters();
+error InvalidAddresses();
 error LinkTransferFailed();
+error AuctionNotFound();
+error InsufficientUpkeepFunds();
+error UpkeepRegistrationFailed();
 
 /**
  * @title Auctioneer
@@ -24,7 +26,7 @@ contract Auctioneer {
 
     DutchAuction[] public auctions;
 
-    mapping(address => bool) public doesAuctionExist;
+    mapping(address => bool) public isValidAuction;
     mapping(address => uint256) public auctionUpkeepIds;
 
     event AuctionCreated(
@@ -41,7 +43,7 @@ contract Auctioneer {
     event AuctionUnpaused(address indexed auctionAddress);
 
     constructor(address _link, address _registry) {
-        if (_link == address(0) || _registry == address(0)) revert InvalidParameters();
+        if (_link == address(0) || _registry == address(0)) revert InvalidAddresses();
         i_link = LinkTokenInterface(_link);
         i_registry = AutomationRegistryBaseInterface(_registry);
     }
@@ -61,38 +63,27 @@ contract Auctioneer {
         uint256 _reservePrice,
         uint256 _minimumBid
     ) external returns (address) {
-        if (_totalSupply == 0 || _initialPrice <= _reservePrice || _minimumBid == 0 || _minimumBid > _reservePrice) {
-            revert InvalidParameters();
-        }
-
         // Create new auction
-        DutchAuction newAuction =
-            new DutchAuction(_name, _symbol, _totalSupply, _initialPrice, _reservePrice, _minimumBid, msg.sender);
+        DutchAuction newAuction = new DutchAuction(
+            _name, _symbol, _totalSupply, _initialPrice, _reservePrice, _minimumBid, msg.sender, address(this)
+        );
 
         // Transfer LINK tokens from msg.sender to this contract
         if (!i_link.transferFrom(msg.sender, address(this), UPKEEP_MINIMUM_FUNDS)) {
             revert LinkTransferFailed();
         }
 
-        // Approve LINK transfer to registry
-        i_link.approve(address(i_registry), UPKEEP_MINIMUM_FUNDS);
+        // Register the upkeep
+        uint256 upkeepId = _registerAuctionUpkeep(address(newAuction));
 
-        // Register upkeep
-        uint256 upkeepID = i_registry.registerUpkeep(
-            address(newAuction), // Target contract address
-            UPKEEP_GAS_LIMIT, // Gas limit for upkeep
-            msg.sender, // Admin address (auction creator)
-            "", // Empty check data
-            "" // Empty offchain config
-        );
-
+        // Setup auction
         DutchAuction(address(newAuction)).setAutomationRegistry(address(i_registry));
         auctions.push(newAuction);
-        doesAuctionExist[address(newAuction)] = true;
-        auctionUpkeepIds[address(newAuction)] = upkeepID;
+        isValidAuction[address(newAuction)] = true;
+        auctionUpkeepIds[address(newAuction)] = upkeepId;
 
         emit AuctionCreated(
-            address(newAuction), _name, _symbol, _totalSupply, _initialPrice, _reservePrice, _minimumBid, upkeepID
+            address(newAuction), _name, _symbol, _totalSupply, _initialPrice, _reservePrice, _minimumBid, upkeepId
         );
 
         return address(newAuction);
@@ -170,12 +161,44 @@ contract Auctioneer {
     }
 
     /**
+     * @notice Get all auctions owned by a specific address
+     * @param owner The address of the auction owner
+     * @return Array of auction addresses owned by the specified address
+     */
+    function getAuctionsByOwner(address owner) external view returns (address[] memory) {
+        uint256 ownerAuctionCount = 0;
+
+        // Count auctions owned by the address
+        for (uint256 i = 0; i < auctions.length; i++) {
+            DutchAuction auction = DutchAuction(address(auctions[i]));
+            if (auction.owner() == owner) {
+                ownerAuctionCount++;
+            }
+        }
+
+        // Create array for owner's auctions
+        address[] memory ownerAuctions = new address[](ownerAuctionCount);
+        uint256 currentIndex = 0;
+
+        // Fill array with owner's auctions
+        for (uint256 i = 0; i < auctions.length; i++) {
+            DutchAuction auction = DutchAuction(address(auctions[i]));
+            if (auction.owner() == owner) {
+                ownerAuctions[currentIndex] = address(auctions[i]);
+                currentIndex++;
+            }
+        }
+
+        return ownerAuctions;
+    }
+
+    /**
      * @notice Get price intervals for an auction
      * @param _auctionAddress Address of the auction to query
      * @return Array of price points at 2-minute intervals
      */
     function getPriceIntervals(address _auctionAddress) external view returns (string memory) {
-        if (!doesAuctionExist[_auctionAddress]) revert AuctionNotFound();
+        if (!isValidAuction[_auctionAddress]) revert AuctionNotFound();
 
         DutchAuction auction = DutchAuction(_auctionAddress);
         uint256 initialPrice = auction.initialPrice();
@@ -186,7 +209,7 @@ contract Auctioneer {
         uint256 intervals = duration / 2 minutes;
 
         // Calculate price drop per interval
-        uint256 priceDropPerInterval = (initialPrice - reservePrice) / (duration / 2 minutes);
+        uint256 priceDropPerInterval = ((initialPrice - reservePrice) * 2 minutes) / duration;
 
         // Build JSON string
         bytes memory json = abi.encodePacked('{"prices":[');
@@ -211,7 +234,7 @@ contract Auctioneer {
      * @param auctionAddress The address of the auction
      */
     function getUpkeepId(address auctionAddress) external view returns (uint256) {
-        if (!doesAuctionExist[auctionAddress]) revert AuctionNotFound();
+        if (!isValidAuction[auctionAddress]) revert AuctionNotFound();
         return auctionUpkeepIds[auctionAddress];
     }
 
@@ -247,7 +270,7 @@ contract Auctioneer {
      * @param amount Amount of LINK tokens to add
      */
     function fundUpkeep(address auctionAddress, uint96 amount) external {
-        if (!doesAuctionExist[auctionAddress]) revert AuctionNotFound();
+        if (!isValidAuction[auctionAddress]) revert AuctionNotFound();
 
         if (!i_link.transferFrom(msg.sender, address(this), amount)) {
             revert LinkTransferFailed();
@@ -255,5 +278,32 @@ contract Auctioneer {
 
         i_link.approve(address(i_registry), amount);
         i_registry.addFunds(auctionUpkeepIds[auctionAddress], amount);
+    }
+
+    ///////////////////////////////
+    ///// CHAINLINK FUNCTIONS /////
+    ///////////////////////////////
+
+    /**
+     * @notice Internal function to register upkeep for an auction
+     * @param auctionAddress The address of the auction to register upkeep for
+     * @return upkeepId The ID of the registered upkeep
+     */
+    function _registerAuctionUpkeep(address auctionAddress) internal returns (uint256) {
+        // Approve LINK transfer to registry
+        i_link.approve(address(i_registry), UPKEEP_MINIMUM_FUNDS);
+
+        // Register upkeep
+        try i_registry.registerUpkeep(
+            auctionAddress, // Target contract address
+            UPKEEP_GAS_LIMIT, // Gas limit for upkeep
+            msg.sender, // Admin address (auction creator)
+            "", // Empty check data
+            "" // Empty offchain config
+        ) returns (uint256 upkeepId) {
+            return upkeepId;
+        } catch {
+            revert UpkeepRegistrationFailed();
+        }
     }
 }
