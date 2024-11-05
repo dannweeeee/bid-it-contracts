@@ -76,7 +76,9 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         if (_minimumBid == 0) revert InvalidMinimumBid();
         if (_minimumBid > _reservePrice) revert MinimumBidTooHigh();
 
-        token = new Token(_name, _symbol, _totalSupply, address(this));
+        uint256 initialSupply = _totalSupply * 1e18;
+
+        token = new Token(_name, _symbol, initialSupply, address(this));
         totalTokensForSale = _totalSupply;
         initialPrice = _initialPrice;
         reservePrice = _reservePrice;

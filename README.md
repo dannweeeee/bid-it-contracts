@@ -4,7 +4,7 @@ Dutch Auction Contracts powered by Chainlink Automation
 
 ## Deployments
 
-- Auctioneer: [0xAdc4345d5906ab030f27188a13AC4e5eA4684592](https://sepolia.etherscan.io/address/0xAdc4345d5906ab030f27188a13AC4e5eA4684592)
+- Auctioneer: [0xaF4a7d48242F9e3DA1EE6F81D00335762Bbcad43](https://sepolia.etherscan.io/address/0xaF4a7d48242F9e3DA1EE6F81D00335762Bbcad43)
 
 ## Contracts
 
