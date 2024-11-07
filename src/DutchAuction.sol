@@ -60,6 +60,17 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     event EthWithdrawn(address indexed owner, uint256 amount);
     event AutomationRegistryUpdated(address oldRegistry, address newRegistry);
 
+    /**
+     * @notice Constructor for the DutchAuction contract
+     * @param _name The name of the token
+     * @param _symbol The symbol of the token
+     * @param _totalSupply The total supply of the token
+     * @param _initialPrice The initial price of the token
+     * @param _reservePrice The reserve price of the token
+     * @param _minimumBid The minimum bid amount
+     * @param _owner The owner of the contract
+     * @param _auctioneer The auctioneer of the contract
+     */
     constructor(
         string memory _name,
         string memory _symbol,
@@ -150,16 +161,11 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     /**
-     * @notice End the auction - only for emergency use
-     * @dev This function should only be used if Chainlink Automation fails
+     * @notice End the auction
      */
     function endAuction() external onlyOwner {
         if (startTime == 0) revert AuctionNotStarted();
         if (auctionEnded) revert AuctionAlreadyEnded();
-
-        // Disable Chainlink Automation to prevent conflicts
-        address oldRegistry = automationRegistry;
-        automationRegistry = address(0);
 
         auctionEnded = true;
 
@@ -168,10 +174,27 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             token.burn(totalTokensForSale);
         }
 
-        emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
+        // Distribute tokens to bidders
+        for (uint256 i = 0; i < bidders.length; i++) {
+            address bidder = bidders[i];
+            uint256 tokenAmount = claimableTokens[bidder];
 
-        // Restore Chainlink Automation
-        automationRegistry = oldRegistry;
+            if (tokenAmount > 0 && !hasClaimedTokens[bidder]) {
+                claimableTokens[bidder] = 0;
+                hasClaimedTokens[bidder] = true;
+
+                bool success = token.transfer(bidder, tokenAmount);
+                if (!success) {
+                    claimableTokens[bidder] = tokenAmount;
+                    hasClaimedTokens[bidder] = false;
+                    revert TransferFailed();
+                }
+
+                emit TokensClaimed(bidder, tokenAmount);
+            }
+        }
+
+        emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
     }
 
     /**
@@ -359,82 +382,34 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     ///////////////////////////////
 
     /**
-     * @notice Modifier to ensure only the automation registry can call a function
-     */
-    modifier onlyAutomation() {
-        require(msg.sender == automationRegistry, "Only Chainlink Automation can call this");
-        _;
-    }
-
-    /**
-     * @notice Modifier to ensure only the auctioneer can call a function
-     */
-    modifier onlyAuctioneer() {
-        require(msg.sender == auctioneer, "Only Auctioneer can call this");
-        _;
-    }
-
-    /**
-     * @notice Set the automation registry
-     * @param _registry The address of the automation registry
-     */
-    function setAutomationRegistry(address _registry) external onlyAuctioneer {
-        require(_registry != address(0), "Invalid registry address");
-        address oldRegistry = automationRegistry;
-        automationRegistry = _registry;
-        emit AutomationRegistryUpdated(oldRegistry, _registry);
-    }
-
-    /**
      * @notice Chainlink Automation: Check if upkeep is needed
      */
     function checkUpkeep(bytes calldata /* checkData */ )
         external
         view
         override
-        returns (bool upkeepNeeded, bytes memory performData)
+        returns (bool upkeepNeeded, bytes memory /* performData */ )
     {
-        // Case 1: Check if auction needs to be ended
-        if (startTime != 0 && !auctionEnded && block.timestamp >= endTime) {
-            return (true, abi.encode(true, 0)); // End auction
-        }
-
-        // Case 2: Check if tokens need to be distributed
-        if (auctionEnded && currentClaimIndex < bidders.length) {
-            uint256 remainingBidders = bidders.length - currentClaimIndex;
-            uint256 batchSize = remainingBidders > BATCH_SIZE ? BATCH_SIZE : remainingBidders;
-            return (true, abi.encode(false, currentClaimIndex, batchSize)); // Distribute tokens
-        }
-
-        return (false, "");
+        upkeepNeeded = startTime != 0 && !auctionEnded && block.timestamp >= endTime;
+        return (upkeepNeeded, "");
     }
 
     /**
      * @notice Chainlink Automation: Perform the upkeep
      */
-    function performUpkeep(bytes calldata performData) external override onlyAutomation {
-        require(msg.sender == automationRegistry, "Only Chainlink Automation");
+    function performUpkeep(bytes calldata /* performData */ ) external override {
+        if (startTime == 0) revert AuctionNotStarted();
+        if (auctionEnded) revert AuctionAlreadyEnded();
 
-        (bool isAuctionEnd, uint256 startIndex, uint256 batchSize) = abi.decode(performData, (bool, uint256, uint256));
+        auctionEnded = true;
 
-        if (isAuctionEnd) {
-            // End the auction
-            if (!auctionEnded && block.timestamp >= endTime) {
-                auctionEnded = true;
-
-                // Burn remaining tokens if any
-                if (totalTokensForSale > 0) {
-                    token.burn(totalTokensForSale);
-                }
-
-                emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
-            }
-            return;
+        // Burn remaining tokens if any
+        if (totalTokensForSale > 0) {
+            token.burn(totalTokensForSale);
         }
 
-        // Distribute tokens in batches
-        uint256 endIndex = startIndex + batchSize;
-        for (uint256 i = startIndex; i < endIndex && i < bidders.length; i++) {
+        // Distribute tokens to bidders
+        for (uint256 i = 0; i < bidders.length; i++) {
             address bidder = bidders[i];
             uint256 tokenAmount = claimableTokens[bidder];
 
@@ -453,6 +428,6 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             }
         }
 
-        currentClaimIndex = endIndex;
+        emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
     }
 }

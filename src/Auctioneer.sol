@@ -2,19 +2,21 @@
 pragma solidity ^0.8.26;
 
 import {DutchAuction} from "./DutchAuction.sol";
+import {IERC20Metadata as IERC20} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 
 struct RegistrationParams {
+    address upkeepContract;
+    uint96 amount;
+    address adminAddress;
+    uint32 gasLimit;
+    uint8 triggerType;
+    IERC20 billingToken;
     string name;
     bytes encryptedEmail;
-    address upkeepContract;
-    uint32 gasLimit;
-    address adminAddress;
-    uint8 triggerType;
     bytes checkData;
     bytes triggerConfig;
     bytes offchainConfig;
-    uint96 amount;
 }
 
 interface AutomationRegistrarInterface {
@@ -37,7 +39,7 @@ contract Auctioneer {
     AutomationRegistrarInterface public immutable i_registrar;
     address public immutable i_registry;
 
-    uint96 public constant UPKEEP_MINIMUM_FUNDS = 5 * 10 ** 18; // minimum 5 LINK
+    uint96 public constant UPKEEP_MINIMUM_FUNDS = 1 * 10 ** 18; // minimum 1 LINK
     uint32 public constant UPKEEP_GAS_LIMIT = 500000;
 
     DutchAuction[] public auctions;
@@ -96,7 +98,6 @@ contract Auctioneer {
         uint256 upkeepId = _registerAuctionUpkeep(address(newAuction));
 
         // Setup auction with registry (not registrar)
-        DutchAuction(address(newAuction)).setAutomationRegistry(i_registry); // Changed to use registry
         auctions.push(newAuction);
         isValidAuction[address(newAuction)] = true;
         auctionUpkeepIds[address(newAuction)] = upkeepId;
@@ -299,15 +300,16 @@ contract Auctioneer {
         // Prepare registration parameters
         RegistrationParams memory params = RegistrationParams({
             name: "Dutch Auction Automation",
-            encryptedEmail: bytes(""), // No email needed
+            encryptedEmail: bytes(""),
             upkeepContract: auctionAddress,
             gasLimit: UPKEEP_GAS_LIMIT,
             adminAddress: msg.sender,
-            triggerType: 0, // Use default trigger type
+            triggerType: 0,
             checkData: bytes(""),
             triggerConfig: bytes(""),
             offchainConfig: bytes(""),
-            amount: UPKEEP_MINIMUM_FUNDS
+            amount: UPKEEP_MINIMUM_FUNDS,
+            billingToken: IERC20(address(i_link))
         });
 
         // Register upkeep
