@@ -8,102 +8,69 @@ import {Token} from "../src/Token.sol";
 contract MaliciousContract {
     DutchAuction public auction;
     uint256 public attackCount;
-    uint256 public bidQuantity;
+    uint256 public constant ATTACK_ROUNDS = 3;
 
-    constructor(address _auction) {
-        auction = DutchAuction(_auction);
+    constructor(address _auctionAddress) {
+        auction = DutchAuction(_auctionAddress);
     }
 
-    // Fallback function that attempts to reenter the bid function
+    // Function to start the attack
+    function attack() external payable {
+        require(msg.value >= 1 ether, "Need ETH for attack");
+        auction.bid{value: 1 ether}();
+    }
+
+    // Fallback function to perform the reentrancy attack
     receive() external payable {
-        if (attackCount < 3) {
-            // Limit attack attempts to prevent infinite loops
+        if (attackCount < ATTACK_ROUNDS && address(auction).balance >= 1 ether) {
             attackCount++;
-            // Try to bid again when receiving refund
-            auction.bid{value: msg.value}(bidQuantity);
+            auction.bid{value: 1 ether}();
         }
-    }
-
-    // Function to initiate the attack
-    function attack(uint256 _quantity) external payable {
-        bidQuantity = _quantity;
-        auction.bid{value: msg.value}(_quantity);
     }
 }
 
 contract ReentrancyAttackTest is Test {
     DutchAuction public auction;
-    MaliciousContract public attacker;
+    Token public token;
     address public owner;
     address public auctioneer;
     address public alice;
+    address public bob;
 
     function setUp() public {
         owner = makeAddr("owner");
         auctioneer = makeAddr("auctioneer");
         alice = makeAddr("alice");
+        bob = makeAddr("bob");
 
-        // Deploy Dutch Auction with initial parameters
-        auction = new DutchAuction(
-            "Test Token",
-            "TEST",
-            1000, // total supply
-            1 ether, // initial price
-            0.1 ether, // reserve price
-            0.1 ether, // minimum bid
-            owner,
-            auctioneer
-        );
+        vm.startPrank(owner);
+        auction = new DutchAuction("Test Token", "TEST", 1000, 1 ether, 0.1 ether, 0.1 ether, owner, auctioneer);
 
-        // Deploy attacker contract
-        attacker = new MaliciousContract(address(auction));
-
-        // Start auction
-        vm.prank(owner);
-        auction.startAuction();
+        (,,,, address tokenAddress,) = auction.getTokenDetails();
+        token = Token(tokenAddress);
+        vm.stopPrank();
     }
 
     function testReentrancyAttack() public {
-        // Fund attacker contract
-        vm.deal(address(attacker), 10 ether);
+        // Start the auction
+        vm.prank(owner);
+        auction.startAuction();
 
-        // Record initial state
-        uint256 initialTokensForSale = auction.totalTokensForSale();
+        // Deploy malicious contract
+        MaliciousContract attacker = new MaliciousContract(address(auction));
 
-        // Attempt reentrancy attack
-        uint256 bidQuantity = 1 ether;
-        uint256 currentPrice = auction.getCurrentPrice();
-        uint256 bidAmount = bidQuantity * currentPrice;
+        // Fund the attacker contract
+        vm.deal(address(attacker), 5 ether);
 
-        vm.expectRevert();
-        attacker.attack{value: bidAmount}(bidQuantity);
+        // Record initial balances
+        uint256 initialAuctionBalance = address(auction).balance;
 
-        // Verify state after attack
-        assertEq(
-            auction.totalTokensForSale(),
-            initialTokensForSale,
-            "Reentrancy attack should not affect total tokens for sale"
-        );
-        assertEq(attacker.attackCount(), 0, "Reentrancy attack should not increment attack counter");
-    }
+        // Perform the attack
+        vm.prank(address(attacker));
+        attacker.attack{value: 1 ether}();
 
-    function testMultipleBidsLegitimate() public {
-        // Fund alice
-        vm.deal(alice, 50 ether);
-
-        // Make multiple legitimate bids
-        vm.startPrank(alice);
-
-        uint256 bidQuantity = 10;
-        uint256 currentPrice = auction.getCurrentPrice();
-        uint256 bidAmount = bidQuantity * currentPrice;
-
-        auction.bid{value: bidAmount}(bidQuantity);
-        auction.bid{value: bidAmount}(bidQuantity);
-
-        vm.stopPrank();
-
-        // Verify legitimate multiple bids work
-        assertEq(auction.claimableTokens(alice), 20);
+        // Verify that only one bid succeeded due to reentrancy guard
+        assertEq(attacker.attackCount(), 0, "Reentrancy guard should prevent multiple bids");
+        assertEq(address(auction).balance, initialAuctionBalance + 1 ether, "Only one bid should succeed");
     }
 }

@@ -15,8 +15,6 @@ error MinimumBidTooHigh();
 error InvalidMinimumBid();
 error AuctionNotStarted();
 error AuctionAlreadyEnded();
-error InvalidBidQuantity();
-error BidQuantityTooHigh();
 error MsgValueTooLow();
 error AuctionAlreadyStarted();
 error AuctionNotEnded();
@@ -33,32 +31,27 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     Token public token;
 
     uint256 public initialPrice;
+    uint256 public clearingPrice;
     uint256 public reservePrice;
     uint256 public minimumBid;
     uint256 public startTime;
     uint256 public endTime;
-    uint256 public immutable AUCTION_DURATION = 20 minutes;
+    uint256 public immutable AUCTION_DURATION = 3 minutes;
     uint256 public totalTokensForSale;
     uint256 public totalEthRaised;
-    uint256 public totalTokensSold;
     bool public auctionEnded;
-    address public automationRegistry;
-    uint256 public constant BATCH_SIZE = 50;
-    uint256 public currentClaimIndex;
     address[] public bidders;
     address public immutable auctioneer;
 
-    mapping(address => uint256) public userBids;
-    mapping(address => uint256) public claimableTokens;
+    mapping(address => uint256) public ethContributed;
     mapping(address => bool) public hasClaimedTokens;
     mapping(address => bool) public isBidder;
 
-    event Bid(address indexed bidder, uint256 ethAmount, uint256 tokenAmount, uint256 price);
+    event Bid(address indexed bidder, uint256 ethAmount, uint256 price);
     event AuctionStarted(uint256 startTime, uint256 endTime, uint256 startingPrice);
     event AuctionEnded(uint256 finalPrice, uint256 tokensSold, uint256 ethRaised);
     event TokensClaimed(address indexed bidder, uint256 amount);
     event EthWithdrawn(address indexed owner, uint256 amount);
-    event AutomationRegistryUpdated(address oldRegistry, address newRegistry);
 
     /**
      * @notice Constructor for the DutchAuction contract
@@ -98,34 +91,18 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     /**
-     * @notice Place a bid for a given quantity of tokens
-     * @param _quantity The quantity of tokens to bid for
+     * @notice Place a bid for a given quantity of tokens with ETH
      */
-    function bid(uint256 _quantity) public payable nonReentrant whenNotPaused {
-        // Check if auction has started and not ended
+    function bid() public payable nonReentrant whenNotPaused {
         if (startTime == 0) revert AuctionNotStarted();
         if (auctionEnded) revert AuctionAlreadyEnded();
-
-        // Validate bid quantity
-        if (_quantity == 0) revert InvalidBidQuantity();
-        if (_quantity > totalTokensForSale) revert BidQuantityTooHigh();
         if (msg.value < minimumBid) revert MsgValueTooLow();
 
-        // Calculate total cost based on current token price
-        uint256 currentTokenPrice = getCurrentPrice();
-        uint256 totalCost = _quantity * currentTokenPrice / (1 ether);
+        uint256 currentPrice = getCurrentPrice();
 
-        // Ensure sufficient ETH was sent
-        if (msg.value < totalCost) revert MsgValueTooLow();
-
-        // Update auction state
-        totalTokensForSale -= _quantity;
-        totalTokensSold += _quantity;
-        totalEthRaised += totalCost;
-
-        // Update bidder state
-        userBids[msg.sender] += totalCost;
-        claimableTokens[msg.sender] += _quantity;
+        // Track total ETH raised and bidder state
+        ethContributed[msg.sender] += msg.value;
+        totalEthRaised += msg.value;
 
         // Add bidder to list if first time bidding
         if (!isBidder[msg.sender]) {
@@ -133,18 +110,11 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             bidders.push(msg.sender);
         }
 
-        emit Bid(msg.sender, totalCost, _quantity, currentTokenPrice);
-
-        // Refund excess ETH if any
-        uint256 refundAmount = msg.value - totalCost;
-        if (refundAmount > 0) {
-            (bool success,) = msg.sender.call{value: refundAmount}("");
-            if (!success) revert RefundFailed();
-        }
+        emit Bid(msg.sender, msg.value, currentPrice);
     }
 
     ///////////////////////////////
-    /////// OWNER FUNCTIONS ///////
+    /////// ADMIN FUNCTIONS ///////
     ///////////////////////////////
 
     /**
@@ -166,35 +136,49 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     function endAuction() external onlyOwner {
         if (startTime == 0) revert AuctionNotStarted();
         if (auctionEnded) revert AuctionAlreadyEnded();
+        if (block.timestamp < endTime && getRemainingTokens() > 0) revert AuctionNotEnded();
 
         auctionEnded = true;
 
-        // Burn remaining tokens if any
-        if (totalTokensForSale > 0) {
-            token.burn(totalTokensForSale);
-        }
+        // Tokens to distribute are the total tokens sold
+        uint256 tokensToDistribute = getSoldTokens();
 
-        // Distribute tokens to bidders
+        // Get the clearing price
+        clearingPrice = getCurrentPrice();
+
+        // Distribute tokens to bidders proportionally
         for (uint256 i = 0; i < bidders.length; i++) {
             address bidder = bidders[i];
-            uint256 tokenAmount = claimableTokens[bidder];
+            uint256 ethContribution = ethContributed[bidder];
+
+            // Calculate tokens for this bidder based on their ETH contribution
+            uint256 tokenAmount = (ethContribution * tokensToDistribute) / totalEthRaised;
+            uint256 ethNeeded = tokenAmount * clearingPrice;
+            uint256 refund = ethContribution - ethNeeded;
+
+            if (refund > 0) {
+                (bool success,) = bidder.call{value: refund}("");
+                if (!success) revert RefundFailed();
+            }
 
             if (tokenAmount > 0 && !hasClaimedTokens[bidder]) {
-                claimableTokens[bidder] = 0;
                 hasClaimedTokens[bidder] = true;
-
-                bool success = token.transfer(bidder, tokenAmount);
+                bool success = token.transfer(bidder, tokenAmount * 1e18);
                 if (!success) {
-                    claimableTokens[bidder] = tokenAmount;
                     hasClaimedTokens[bidder] = false;
                     revert TransferFailed();
                 }
-
-                emit TokensClaimed(bidder, tokenAmount);
+                emit TokensClaimed(bidder, tokenAmount * 1e18);
             }
         }
 
-        emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
+        // Burn any remaining tokens
+        uint256 remainingTokens = totalTokensForSale - tokensToDistribute;
+        if (remainingTokens > 0) {
+            token.burn(remainingTokens * 1e18);
+        }
+
+        emit AuctionEnded(clearingPrice, tokensToDistribute, totalEthRaised);
     }
 
     /**
@@ -229,20 +213,6 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     ///////////////////////////////
-    ////// HELPER FUNCTIONS ///////
-    ///////////////////////////////
-
-    /**
-     * @notice Calculate the price for a given quantity of tokens
-     * @param _quantity The quantity of tokens to calculate the price for
-     * @return The price for the given quantity of tokens
-     */
-    function calculatePrice(uint256 _quantity) public view returns (uint256) {
-        uint256 price = getCurrentPrice();
-        return price * _quantity / (1 ether);
-    }
-
-    ///////////////////////////////
     /////// GETTER FUNCTIONS //////
     ///////////////////////////////
 
@@ -258,6 +228,28 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         uint256 totalPriceDrop = initialPrice - reservePrice;
         uint256 discount = (timeElapsed * totalPriceDrop) / AUCTION_DURATION;
         return initialPrice - discount;
+    }
+
+    /**
+     * @notice Get the total tokens sold
+     * @return The total tokens sold
+     */
+    function getSoldTokens() public view returns (uint256) {
+        uint256 currentPrice = getCurrentPrice();
+        uint256 totalTokenDemand = Math.min((totalEthRaised / currentPrice), totalTokensForSale);
+
+        return totalTokenDemand;
+    }
+
+    /**
+     * @notice Get the remaining tokens for sale
+     * @return The remaining tokens for sale
+     */
+    function getRemainingTokens() public view returns (uint256) {
+        uint256 totalTokenDemand = getSoldTokens();
+        uint256 remainingTokens = totalTokensForSale - totalTokenDemand;
+
+        return remainingTokens;
     }
 
     /**
@@ -292,20 +284,17 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     /**
-     * @notice Get comprehensive auction details excluding status information
-     * @return tokenAddress The address of the token being auctioned
-     * @return initialTokenPrice The initial price of tokens
-     * @return reserveTokenPrice The reserve price of tokens
+     * @notice Get the auction statistics
+     * @return tokenAddress The address of the token contract
+     * @return initialTokenPrice The initial price of the token
+     * @return reserveTokenPrice The reserve price of the token
      * @return minBidAmount The minimum bid amount
      * @return auctionStartTime The start time of the auction
      * @return auctionEndTime The end time of the auction
      * @return duration The duration of the auction
-     * @return totalSupply The total tokens initially available
-     * @return ethRaised The total ETH raised so far
+     * @return totalSupply The total supply of the token
      * @return soldTokens The total tokens sold
-     * @return totalBidders The total number of unique bidders
-     * @return automationRegistryAddress The address of the automation registry
-     * @return auctioneerAddress The address of the auctioneer
+     * @return remainingTokens The remaining tokens for sale
      */
     function getAuctionStatistics()
         external
@@ -319,10 +308,10 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             uint256 auctionEndTime,
             uint256 duration,
             uint256 totalSupply,
-            uint256 ethRaised,
             uint256 soldTokens,
+            uint256 remainingTokens,
+            uint256 ethRaised,
             uint256 totalBidders,
-            address automationRegistryAddress,
             address auctioneerAddress
         )
     {
@@ -334,11 +323,11 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             startTime,
             endTime,
             AUCTION_DURATION,
-            totalTokensForSale + totalTokensSold,
+            totalTokensForSale,
+            getSoldTokens(),
+            getRemainingTokens(),
             totalEthRaised,
-            totalTokensSold,
             bidders.length,
-            automationRegistry,
             auctioneer
         );
     }
@@ -377,9 +366,9 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         return bidders;
     }
 
-    ///////////////////////////////
-    ////// CHAINLINK FUNCTIONS ////
-    ///////////////////////////////
+    //////////////////////////////////////////
+    ////// CHAINLINK AUTOMATION FUNCTIONS ////
+    //////////////////////////////////////////
 
     /**
      * @notice Chainlink Automation: Check if upkeep is needed
@@ -390,7 +379,9 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         override
         returns (bool upkeepNeeded, bytes memory /* performData */ )
     {
-        upkeepNeeded = startTime != 0 && !auctionEnded && block.timestamp >= endTime;
+        upkeepNeeded = (startTime != 0) // auction has started
+            && !auctionEnded // auction hasn't ended yet
+            && (block.timestamp >= endTime || getRemainingTokens() == 0); // time is up OR remaining tokens are 0
         return (upkeepNeeded, "");
     }
 
@@ -400,34 +391,48 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     function performUpkeep(bytes calldata /* performData */ ) external override {
         if (startTime == 0) revert AuctionNotStarted();
         if (auctionEnded) revert AuctionAlreadyEnded();
+        if (block.timestamp < endTime && getRemainingTokens() > 0) revert AuctionNotEnded();
 
         auctionEnded = true;
 
-        // Burn remaining tokens if any
-        if (totalTokensForSale > 0) {
-            token.burn(totalTokensForSale);
-        }
+        // Tokens to distribute are the total tokens sold
+        uint256 tokensToDistribute = getSoldTokens();
 
-        // Distribute tokens to bidders
+        // Get the clearing price
+        clearingPrice = getCurrentPrice();
+
+        // Distribute tokens to bidders proportionally
         for (uint256 i = 0; i < bidders.length; i++) {
             address bidder = bidders[i];
-            uint256 tokenAmount = claimableTokens[bidder];
+            uint256 ethContribution = ethContributed[bidder];
+
+            // Calculate tokens for this bidder based on their ETH contribution
+            uint256 tokenAmount = (ethContribution * tokensToDistribute) / totalEthRaised;
+            uint256 ethNeeded = tokenAmount * clearingPrice;
+            uint256 refund = ethContribution - ethNeeded;
+
+            if (refund > 0) {
+                (bool success,) = bidder.call{value: refund}("");
+                if (!success) revert RefundFailed();
+            }
 
             if (tokenAmount > 0 && !hasClaimedTokens[bidder]) {
-                claimableTokens[bidder] = 0;
                 hasClaimedTokens[bidder] = true;
-
-                bool success = token.transfer(bidder, tokenAmount);
+                bool success = token.transfer(bidder, tokenAmount * 1e18);
                 if (!success) {
-                    claimableTokens[bidder] = tokenAmount;
                     hasClaimedTokens[bidder] = false;
                     revert TransferFailed();
                 }
-
-                emit TokensClaimed(bidder, tokenAmount);
+                emit TokensClaimed(bidder, tokenAmount * 1e18);
             }
         }
 
-        emit AuctionEnded(getCurrentPrice(), totalTokensSold, totalEthRaised);
+        // Burn any remaining tokens
+        uint256 remainingTokens = totalTokensForSale - tokensToDistribute;
+        if (remainingTokens > 0) {
+            token.burn(remainingTokens * 1e18);
+        }
+
+        emit AuctionEnded(clearingPrice, tokensToDistribute, totalEthRaised);
     }
 }

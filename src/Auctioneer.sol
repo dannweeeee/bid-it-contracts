@@ -57,8 +57,6 @@ contract Auctioneer {
         uint256 minimumBid,
         uint256 upkeepId
     );
-    event AuctionPaused(address indexed auctionAddress);
-    event AuctionUnpaused(address indexed auctionAddress);
 
     constructor(address _link, address _registrar, address _registry) {
         if (_link == address(0) || _registrar == address(0) || _registry == address(0)) {
@@ -68,10 +66,6 @@ contract Auctioneer {
         i_registrar = AutomationRegistrarInterface(_registrar);
         i_registry = _registry;
     }
-
-    ///////////////////////////////
-    /// ADMINISTRATIVE FUNCTIONS //
-    ///////////////////////////////
 
     /**
      * @notice Create a new Dutch auction
@@ -284,9 +278,9 @@ contract Auctioneer {
         return string(buffer);
     }
 
-    ///////////////////////////////
-    ///// CHAINLINK FUNCTIONS /////
-    ///////////////////////////////
+    //////////////////////////////////////////
+    ///// CHAINLINK AUTOMATION FUNCTIONS /////
+    //////////////////////////////////////////
 
     /**
      * @notice Internal function to register upkeep for an auction
