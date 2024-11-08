@@ -4,7 +4,7 @@ Dutch Auction Contracts powered by Chainlink Automation
 
 ## Deployments
 
-- Auctioneer: [0xABd4Db4dDdc4FCdA1FEaae61b423f3be948218F9](https://sepolia.basescan.org/address/0xABd4Db4dDdc4FCdA1FEaae61b423f3be948218F9)
+- Auctioneer: [0xb7225cC897166aF0e19f61C07bF73746c9D19b91](https://sepolia.basescan.org/address/0xb7225cC897166aF0e19f61C07bF73746c9D19b91)
 
 ## Contracts
 
@@ -14,6 +14,7 @@ Dutch Auction Contracts powered by Chainlink Automation
 
 ## Tests
 
+- DutchAuctionTest.t.sol
 - ReentrancyAttackTest.t.sol
 
 ## Commands
@@ -22,6 +23,12 @@ Dutch Auction Contracts powered by Chainlink Automation
 
 ```bash
 forge script script/deployAuctioneer.sol:DeployAuctioneer --rpc-url $RPC_URL --broadcast --verify --etherscan-api-key $ETHERSCAN_API_KEY
+```
+
+### Test Dutch Auction
+
+```bash
+forge test --match-contract DutchAuctionTest -vvvvv
 ```
 
 ### Test Reentrancy Attack

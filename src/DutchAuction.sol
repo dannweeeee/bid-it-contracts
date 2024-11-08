@@ -221,8 +221,8 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
      * @return The current price of the tokens (in wei)
      */
     function getCurrentPrice() public view returns (uint256) {
-        if (block.timestamp <= startTime) return initialPrice;
-        if (block.timestamp >= endTime) return reservePrice;
+        if (startTime == 0) return initialPrice;
+        if (endTime != 0 && block.timestamp >= endTime) return reservePrice;
 
         uint256 timeElapsed = block.timestamp - startTime;
         uint256 totalPriceDrop = initialPrice - reservePrice;
@@ -338,6 +338,7 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
      * @return isEnded Whether the auction has ended
      * @return currentTokenPrice The current price of the tokens
      * @return remainingTokens The remaining tokens for sale
+     * @return soldTokens The total tokens sold
      * @return timeRemaining The time remaining in the auction
      */
     function getAuctionStatus()
@@ -348,13 +349,15 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
             bool isEnded,
             uint256 currentTokenPrice,
             uint256 remainingTokens,
+            uint256 soldTokens,
             uint256 timeRemaining
         )
     {
         isStarted = startTime != 0;
         isEnded = auctionEnded;
         currentTokenPrice = getCurrentPrice();
-        remainingTokens = totalTokensForSale;
+        remainingTokens = getRemainingTokens();
+        soldTokens = getSoldTokens();
         timeRemaining = block.timestamp >= endTime ? 0 : endTime - block.timestamp;
     }
 
