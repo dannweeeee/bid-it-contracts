@@ -5,6 +5,11 @@ import {Test, console2} from "forge-std/Test.sol";
 import {DutchAuction} from "../src/DutchAuction.sol";
 import {Token} from "../src/Token.sol";
 
+/**
+ * @title MaliciousContract
+ * @author @dannweeeee
+ * @notice Contract to perform a reentrancy attack on the DutchAuction contract
+ */
 contract MaliciousContract {
     DutchAuction public auction;
     uint256 public attackCount;
@@ -29,6 +34,11 @@ contract MaliciousContract {
     }
 }
 
+/**
+ * @title ReentrancyAttackTest
+ * @author @dannweeeee
+ * @notice Test suite for the reentrancy attack on the DutchAuction contract
+ */
 contract ReentrancyAttackTest is Test {
     DutchAuction public auction;
     Token public token;
@@ -37,6 +47,9 @@ contract ReentrancyAttackTest is Test {
     address public alice;
     address public bob;
 
+    /**
+     * @notice Set up the test environment
+     */
     function setUp() public {
         owner = makeAddr("owner");
         auctioneer = makeAddr("auctioneer");
@@ -51,6 +64,9 @@ contract ReentrancyAttackTest is Test {
         vm.stopPrank();
     }
 
+    /**
+     * @notice Test the reentrancy attack
+     */
     function testReentrancyAttack() public {
         // Start the auction
         vm.prank(owner);
