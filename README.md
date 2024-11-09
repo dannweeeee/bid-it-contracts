@@ -1,6 +1,6 @@
 # Team Bid It Contracts
 
-Dutch Auction Contracts powered by Chainlink Automation
+Dutch Auction Contracts powered by Chainlink Automation. Live Website on https://usebidit.vercel.app
 
 ## Deployments
 
@@ -8,9 +8,9 @@ Dutch Auction Contracts powered by Chainlink Automation
 
 ## Contracts
 
-- Auctioneer.sol
-- DutchAuction.sol
-- Token.sol
+- Auctioneer.sol: Factory contract for creating and managing Dutch auctions
+- DutchAuction.sol: A Dutch auction contract for token ICOs (similar to Liquidity Bootstrapping Pools)
+- Token.sol: An ERC20 token contract for the auction
 
 ## Tests
 
@@ -36,3 +36,8 @@ forge test --match-contract DutchAuctionTest -vvvvv
 ```bash
 forge test --match-contract ReentrancyAttackTest -vvvvv
 ```
+
+## Links
+
+- [Bid It dApp](https://github.com/dannweeeee/bid-it-dapp)
+- [Bid It Contracts](https://github.com/dannweeeee/bid-it-contracts)
