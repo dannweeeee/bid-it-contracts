@@ -36,10 +36,11 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     uint256 public minimumBid;
     uint256 public startTime;
     uint256 public endTime;
-    uint256 public immutable AUCTION_DURATION = 3 minutes;
+    uint256 public immutable AUCTION_DURATION = 20 minutes;
     uint256 public totalTokensForSale;
     uint256 public totalEthRaised;
     bool public auctionEnded;
+    bool public ethWithdrawn;
     address[] public bidders;
     address public immutable auctioneer;
 
@@ -207,6 +208,9 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
 
         // Transfer ETH to owner
         (bool success,) = owner().call{value: balance}("");
+
+        ethWithdrawn = true;
+
         if (!success) revert TransferFailed();
 
         emit EthWithdrawn(owner(), balance);
@@ -231,6 +235,16 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
     }
 
     /**
+     * @notice Get the final clearing price of the auction
+     * @return The final price at which the auction settled (in wei)
+     * @dev Returns 0 if the auction hasn't ended yet
+     */
+    function getFinalPrice() external view returns (uint256) {
+        if (!auctionEnded) return 0;
+        return clearingPrice;
+    }
+
+    /**
      * @notice Get the total tokens sold
      * @return The total tokens sold
      */
@@ -250,6 +264,14 @@ contract DutchAuction is ReentrancyGuard, Pausable, Ownable, AutomationCompatibl
         uint256 remainingTokens = totalTokensForSale - totalTokenDemand;
 
         return remainingTokens;
+    }
+
+    /**
+     * @notice Check if ETH has been withdrawn from the auction
+     * @return True if ETH has been withdrawn, false otherwise
+     */
+    function isEthWithdrawn() external view returns (bool) {
+        return ethWithdrawn;
     }
 
     /**
