@@ -2,6 +2,11 @@
 
 Dutch Auction Contracts powered by Chainlink Automation. Live Website on https://usebidit.vercel.app
 
+## System Design
+
+![image](https://github.com/user-attachments/assets/77e88fad-ca2e-4f80-8a53-96666b1214bd)
+
+
 ## Deployments
 
 - Auctioneer: [0x166BdC0429fd448b4370733d0Be058e84c56DF4C](https://sepolia.basescan.org/address/0x166BdC0429fd448b4370733d0Be058e84c56DF4C)
